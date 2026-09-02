@@ -235,6 +235,12 @@ with tab2:
     st.subheader("📖 Журнал документации скважины (как в бумажном бланке)")
     wells = requests.get(f"{API_URL}/api/lines/{line_num}/wells").json()
     opts = ["➕ Новая скважина"] + [f"№{w['well_number']} — редактировать" for w in wells]
+
+    # отложенное переключение в режим редактирования (ставилось после сохранения формы)
+    pending = st.session_state.pop("pending_sel_well", None)
+    if pending and pending in opts:
+        st.session_state["sel_well"] = pending  # здесь это разрешено: виджет ещё не создан
+
     choice = st.selectbox("Скважина", opts, key="sel_well")
     ew = wells[opts.index(choice) - 1] if choice != opts[0] else None
     g = lambda k, d=None: (ew.get(k) if ew and ew.get(k) is not None else d)
@@ -380,14 +386,24 @@ with tab2:
             "avg_content_massa": c_massa or None,
             "limitnost": limit if limit != "-" else None,
         }
+
         if ew:
             r = requests.put(f"{API_URL}/api/wells/{ew['id']}", json=payload)
             well_id = ew['id']
         else:
             r = requests.post(f"{API_URL}/api/wells", json=payload)
-            well_id = r.json()['id']
+            well_id = None
 
-        if r.status_code == 200:
+        # СНАЧАЛА проверяем статус, потом читаем id
+        if r.status_code != 200:
+            try:
+                detail = r.json().get('detail', r.text)
+            except Exception:
+                detail = r.text
+            st.error(f"❌ Ошибка API ({r.status_code}): {detail}")
+        else:
+            if well_id is None:
+                well_id = r.json()['id']
             requests.delete(f"{API_URL}/api/layers/well/{well_id}")
             for d_from, d_to, lith, desc, fr_note, cat, vol, au in passes:
                 if d_to <= d_from:
@@ -400,10 +416,10 @@ with tab2:
                     "category": cat if cat != "-" else None,
                     "volume": vol or None,
                 })
+            # 👇 переключаем селектор на созданную скважину — следующие сохранения пойдут через PUT
+            st.session_state["pending_sel_well"] = f"№{well_number} — редактировать"
             st.success(f"✅ Журнал скважины №{well_number} сохранён")
             st.rerun()
-        else:
-            st.error(f"❌ {r.json().get('detail')}")
 
 # ================= ТАБ 3: ВИЗУАЛИЗАЦИЯ =================
 with tab3:

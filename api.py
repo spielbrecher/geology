@@ -153,11 +153,19 @@ def get_wells(line_number: str):
 def create_well(well: WellCreate):
     try:
         data = _clean(well)
-        well_id = db.add_well(data)
-        return {"id": well_id, "message": f"Скважина {well.well_number} создана"}
+        # если скважина с таким номером уже есть в линии — обновляем, а не дублируем
+        with db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM wells WHERE well_number = ? AND line_id = ?",
+                        (well.well_number, well.line_id))
+            row = cur.fetchone()
+        if row:
+            existing_id = row["id"]
+            db.update_well(existing_id, {k: v for k, v in data.items() if k != "line_id"})
+            return {"id": existing_id, "message": f"Скважина {well.well_number} обновлена"}
+        return {"id": db.add_well(data), "message": f"Скважина {well.well_number} создана"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @app.put("/api/wells/{well_id}")
 def update_well(well_id: int, well: WellCreate):
